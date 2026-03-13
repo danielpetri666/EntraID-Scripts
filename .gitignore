@@ -1,0 +1,15 @@
+# PowerShell
+*.psd1.bak
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+*.code-workspace
+
+# Output
+*.xlsx
+*.csv
