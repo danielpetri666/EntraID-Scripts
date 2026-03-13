@@ -232,20 +232,23 @@ function Test-IsGuid {
 function Invoke-GraphGetSafe {
     param([Parameter(Mandatory)][string]$Uri)
 
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
         try {
             return Invoke-MgGraphRequest -Method GET -Uri $Uri -ErrorAction Stop
         }
         catch {
             $msg = $_.Exception.Message
             if (($msg -match '429') -or ($msg -match 'Too Many Requests') -or ($msg -match '503') -or ($msg -match '504')) {
-                Start-Sleep -Milliseconds (200 * $attempt)
+                $wait = [Math]::Min(5 * [Math]::Pow(2, $attempt - 1), 60)
+                Write-Host "  Throttled (attempt $attempt/5), waiting ${wait}s..." -ForegroundColor DarkYellow
+                Start-Sleep -Seconds $wait
                 continue
             }
             return $null
         }
     }
 
+    Write-Warning "Failed after 5 retries: $Uri"
     return $null
 }
 
@@ -257,8 +260,12 @@ function Invoke-GraphGetPaged {
     $next = $Uri
 
     while (-not [string]::IsNullOrWhiteSpace($next)) {
-        $response = Invoke-MgGraphRequest -Method GET -Uri $next -ErrorAction Stop
-        if ($null -ne $response -and $response.ContainsKey('value')) {
+        $response = Invoke-GraphGetSafe -Uri $next
+        if ($null -eq $response) {
+            Write-Warning "Failed to fetch page: $next"
+            break
+        }
+        if ($response -is [System.Collections.IDictionary] -and $response.ContainsKey('value')) {
             foreach ($item in @($response.value)) { [void]$items.Add($item) }
             $next = $response.'@odata.nextLink'
         }
@@ -283,7 +290,7 @@ function Resolve-UserUpn {
     }
 
     $name = if ($u.userPrincipalName) { [string]$u.userPrincipalName } elseif ($u.displayName) { [string]$u.displayName } else { $Id }
-    if ($name -ne $Id) { $script:userById[$Id] = $name }
+    $script:userById[$Id] = $name
     return $name
 }
 
@@ -297,7 +304,7 @@ function Resolve-GroupName {
     if (-not $g) { $g = Invoke-GraphGetSafe -Uri "https://graph.microsoft.com/v1.0/directoryObjects/$Id" }
 
     $name = if ($g.displayName) { [string]$g.displayName } else { $Id }
-    if ($name -ne $Id) { $script:groupById[$Id] = $name }
+    $script:groupById[$Id] = $name
     return $name
 }
 
@@ -318,7 +325,7 @@ function Resolve-AppName {
     $spResp = Invoke-GraphGetSafe -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$AppId'&`$select=displayName,appId"
     $sp = if ($spResp -and $spResp.ContainsKey('value')) { @($spResp.value | Select-Object -First 1)[0] } else { $spResp }
     $name = if ($sp -and $sp.displayName) { [string]$sp.displayName } else { $AppId }
-    if ($name -ne $AppId) { $script:appById[$AppId] = $name }
+    $script:appById[$AppId] = $name
     return $name
 }
 
@@ -481,9 +488,14 @@ function Convert-PolicyToReportRow {
 
     $row = [ordered]@{}
 
-    foreach ($prop in $Policy.PSObject.Properties) {
-        $name = [string]$prop.Name
-        $value = $prop.Value
+    $propNames = if ($Policy -is [System.Collections.IDictionary]) {
+        @($Policy.Keys)
+    } else {
+        @($Policy.PSObject.Properties.Name)
+    }
+
+    foreach ($name in $propNames) {
+        $value = $Policy[$name]
 
         if ($null -eq $value) { $row[$name] = $null; continue }
 
@@ -603,6 +615,7 @@ function Convert-PolicyToReportRow {
         "GroupsIn=$((To-FlatInline $row['cond_Groups_Include']))",
         "GroupsEx=$((To-FlatInline $row['cond_Groups_Exclude']))",
         "RolesIn=$((To-FlatInline $row['cond_Roles_Include']))",
+        "RolesEx=$((To-FlatInline $row['cond_Roles_Exclude']))",
         "AppsIn=$((To-FlatInline $row['cond_Applications_Include']))",
         "LocationsIn=$((To-FlatInline $row['cond_Locations_Include']))",
         "LocationsEx=$((To-FlatInline $row['cond_Locations_Exclude']))",
