@@ -95,6 +95,8 @@ if (-not [string]::IsNullOrWhiteSpace($TenantId)) {
     $connectParams['TenantId'] = $TenantId
 }
 Connect-MgGraph @connectParams -ErrorAction Stop | Out-Null
+$ctx = Get-MgContext
+Write-Host "Connected to Microsoft Graph | $($ctx.Account) | TenantId: $($ctx.TenantId)" -ForegroundColor Green
 #endregion
 
 #region Build SKU name lookup
